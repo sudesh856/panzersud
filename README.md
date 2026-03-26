@@ -1,4 +1,4 @@
-# LoadForge
+# suddpanzer
 
 A fast, open-source HTTP load testing tool written in Go.
 Point it at any endpoint, set your virtual users and duration — it hammers it and tells you exactly how your server held up.
@@ -9,8 +9,8 @@ Point it at any endpoint, set your virtual users and duration — it hammers it 
 
 ## Install
 ```bash
-git clone https://github.com/sudesh856/LoadForge.git
-cd LoadForge
+git clone https://github.com/sudesh856/suddpanzer.git
+cd suddpanzer
 go build -o sudd .
 ```
 

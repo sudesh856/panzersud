@@ -1,13 +1,3 @@
-# .github/workflows/load-test.yml
-#
-# suddpanzer CI — runs your load test on every push to main,
-# fails the job if any threshold is breached, and publishes
-# JUnit results to GitHub's Tests tab.
-#
-# Setup:
-#   1. Add API_TOKEN to repo secrets (Settings → Secrets → Actions)
-#   2. Set SUDDPANZER_VERSION to your latest release tag
-
 name: Load Test
 
 on:
@@ -15,43 +5,45 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:   # manual trigger from Actions UI
+  workflow_dispatch: 
 
 env:
-  SUDDPANZER_VERSION: "0.3.0"   # ← update to your latest tag
+  SUDDPANZER_VERSION: "0.3.0"
   SCENARIO: "examples/load-test.yaml"
 
 jobs:
   load-test:
     name: suddpanzer load test
     runs-on: ubuntu-latest
+    # FIX 1: This allows the action to write the "Tests" report to your UI
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Install suddpanzer — single binary, no deps
-      - name: Install suddpanzer
-        run: |
-          curl -sSL \
-            https://github.com/sudesh856/suddpanzer/releases/download/v${{ env.SUDDPANZER_VERSION }}/suddpanzer-linux-amd64.tar.gz \
-            | tar -xz -C /usr/local/bin suddpanzer
-          suddpanzer --version
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
 
-      # Run the load test.
-      # --output junit  → JUnit XML for GitHub Tests tab
-      # --output-file   → save to file so we can upload it
-      # exit code 1 if any threshold in the YAML is breached
+      - name: Build suddpanzer
+        # Simplest way: build it right here in the workspace
+        run: go build -o suddpanzer ./cmd/main.go
+
       - name: Run load test
         env:
           API_TOKEN: ${{ secrets.API_TOKEN }}
+        # FIX 2: Running it as ./suddpanzer ensures the runner always finds it
         run: |
-          suddpanzer run \
+          ./suddpanzer run \
             --scenario ${{ env.SCENARIO }} \
             --output junit \
             --output-file suddpanzer-results.xml
 
-      # Publish per-threshold pass/fail to the Actions Tests tab
       - name: Publish test results
         uses: mikepenz/action-junit-report@v4
         if: always()
@@ -60,13 +52,12 @@ jobs:
           check_name: "suddpanzer load test"
           fail_on_failure: true
 
-      # Also produce a JSON summary artifact for audit trail
       - name: Generate JSON summary
         if: always()
         env:
           API_TOKEN: ${{ secrets.API_TOKEN }}
         run: |
-          suddpanzer run \
+          ./suddpanzer run \
             --scenario ${{ env.SCENARIO }} \
             --output json \
             --output-file suddpanzer-summary.json || true

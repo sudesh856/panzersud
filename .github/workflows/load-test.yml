@@ -31,7 +31,7 @@ jobs:
 
       - name: Build suddpanzer
         run: |
-          go build -o suddpanzer ./cmd
+          go build -o suddpanzer .
           chmod +x suddpanzer
 
       - name: Run load test

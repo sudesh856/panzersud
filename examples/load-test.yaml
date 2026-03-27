@@ -1,0 +1,41 @@
+# examples/load-test.yaml
+# Run: suddpanzer run --scenario examples/load-test.yaml
+
+name: api-load-test
+
+stages:
+  - duration: 30s
+    target_vus: 50
+
+  - duration: 2m
+    target_vus: 200
+
+  - duration: 30s
+    target_vus: 0
+
+endpoints:
+  - name: get-users
+    url: https://api.example.com/users
+    method: GET
+    weight: 70
+    headers:
+      Authorization: Bearer {{env.API_TOKEN}}
+      Accept: application/json
+    expected_status: 200
+
+  - name: get-products
+    url: https://api.example.com/products
+    method: GET
+    weight: 30
+    headers:
+      Accept: application/json
+    expected_status: 200
+
+# Phase 4: declare thresholds here.
+# suddpanzer exits 1 if any are breached — GitHub Actions marks job as failed.
+# Remove any line you don't want to enforce.
+thresholds:
+  p99_ms: 500          # p99 latency must be under 500ms
+  p95_ms: 300          # p95 latency must be under 300ms
+  error_rate_pct: 1.0  # error rate must be under 1%
+  min_rps: 100         # average RPS must stay above 100

@@ -1,4 +1,4 @@
-module github.com/sudesh856/LoadForge
+module github.com/sudesh856/suddpanzer
 
 go 1.25.5
 

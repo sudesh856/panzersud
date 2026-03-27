@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"github.com/sudesh856/LoadForge/internal/worker"
+	"github.com/sudesh856/suddpanzer/internal/worker"
 )
 
 func TestPool(t *testing.T) {

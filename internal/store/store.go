@@ -8,7 +8,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/sudesh856/LoadForge/internal/dashboard"
+	"github.com/sudesh856/suddpanzer/internal/dashboard"
 )
 
 type RunRecord struct {

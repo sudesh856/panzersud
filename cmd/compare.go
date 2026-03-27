@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
-	"github.com/sudesh856/LoadForge/internal/store"
+	"github.com/sudesh856/suddpanzer/internal/store"
 )
 
 type runSummary struct {

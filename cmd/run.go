@@ -10,28 +10,28 @@ import (
 	"sync"
 	"time"
 
-	"encoding/json"
-
 	"github.com/spf13/cobra"
-	"github.com/sudesh856/LoadForge/internal/dashboard"
-	"github.com/sudesh856/LoadForge/internal/metrics"
-	"github.com/sudesh856/LoadForge/internal/pool"
-	"github.com/sudesh856/LoadForge/internal/ramp"
-	"github.com/sudesh856/LoadForge/internal/report"
-	"github.com/sudesh856/LoadForge/internal/reporter"
-	"github.com/sudesh856/LoadForge/internal/scenario"
-	"github.com/sudesh856/LoadForge/internal/store"
-	"github.com/sudesh856/LoadForge/internal/worker"
+	"github.com/sudesh856/suddpanzer/internal/dashboard"
+	"github.com/sudesh856/suddpanzer/internal/metrics"
+	"github.com/sudesh856/suddpanzer/internal/output"
+	"github.com/sudesh856/suddpanzer/internal/pool"
+	promserver "github.com/sudesh856/suddpanzer/internal/prometheus"
+	"github.com/sudesh856/suddpanzer/internal/ramp"
+	"github.com/sudesh856/suddpanzer/internal/report"
+	"github.com/sudesh856/suddpanzer/internal/reporter"
+	"github.com/sudesh856/suddpanzer/internal/scenario"
+	"github.com/sudesh856/suddpanzer/internal/store"
+	"github.com/sudesh856/suddpanzer/internal/worker"
 	"golang.org/x/time/rate"
 )
 
-var url      string
-var vus      int
+var url string
+var vus int
 var duration string
-var rps      int
-var output string
+var rps int
+var outputFormat string // renamed from "output" to avoid collision with package name
 var flagScenarioFile string
-var method  string
+var method string
 var headers []string
 var timeout string
 var basicAuth string
@@ -39,12 +39,14 @@ var expectedStatus int
 var webFlag bool
 var runName string
 
+var metricsAddr string 
+var outputFile string  
+
 var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run a load test",
 	Run: func(cmd *cobra.Command, args []string) {
 
-		// ── open store (always, so we save every run) ──────────────────────
 		st, stErr := store.New("./blast.db")
 		if stErr != nil {
 			fmt.Println("warning: could not open store:", stErr)
@@ -53,7 +55,15 @@ var runCmd = &cobra.Command{
 			defer st.Close()
 		}
 
-		// ── SCENARIO MODE ──────────────────────────────────────────────────
+		var promSnap *promserver.Snapshot
+		if metricsAddr != "" {
+			srv := promserver.New(metricsAddr)
+			srv.Start()
+			defer srv.Stop()
+			promSnap = srv.Snap()
+			fmt.Fprintf(os.Stderr, "metrics: http://%s/metrics\n", metricsAddr)
+		}
+
 		if flagScenarioFile != "" {
 			s, err := scenario.LoadScenario(flagScenarioFile)
 			if err != nil {
@@ -79,19 +89,17 @@ var runCmd = &cobra.Command{
 			defer cancelTimeout()
 			defer cancelSignal()
 
-			// ── web dashboard ──
-			// ── web dashboard ──
-var dash *dashboard.Server
-if webFlag {
-    st, err := store.New("runs.db")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    dash = dashboard.New(cancelSignal, st)
-    dash.Start(":7070")
-    fmt.Println("dashboard: http://localhost:7070")
-}
+			// - web dashboard 
+			var dash *dashboard.Server
+			if webFlag {
+				dashSt, err := store.New("runs.db")
+				if err != nil {
+					log.Fatal(err)
+				}
+				dash = dashboard.New(cancelSignal, dashSt)
+				dash.Start(":7070")
+				fmt.Println("dashboard: http://localhost:7070")
+			}
 
 			ctrl := ramp.New(rampStages)
 			go ctrl.Run(ctx)
@@ -109,7 +117,7 @@ if webFlag {
 			agg.Start(p.Results())
 			start := time.Now()
 
-			// ── broadcast to dashboard every 500ms ──
+			// - broadcast to dashboard every 500ms -
 			if dash != nil {
 				dash.StartBroadcasting(func() dashboard.MetricsSnapshot {
 					elapsed := time.Since(start)
@@ -123,6 +131,28 @@ if webFlag {
 						TotalReqs: agg.TotalRequests(),
 					}
 				}, ctx)
+			}
+
+			if promSnap != nil {
+				go func() {
+					tick := time.NewTicker(500 * time.Millisecond)
+					defer tick.Stop()
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-tick.C:
+							elapsed := time.Since(start)
+							promSnap.SetRPS(agg.RPS(elapsed))
+							promSnap.LatencyP99Ms.Store(agg.P99())
+							promSnap.LatencyP95Ms.Store(agg.P95())
+							promSnap.LatencyP50Ms.Store(agg.P50())
+							promSnap.ErrorTotal.Store(agg.ErrorCount())
+							promSnap.RequestsTotal.Store(agg.TotalRequests())
+							promSnap.VUsActive.Store(int64(maxVUs))
+						}
+					}
+				}()
 			}
 
 			var wg sync.WaitGroup
@@ -187,7 +217,7 @@ if webFlag {
 				ErrorRate:     agg.ErrorRate(),
 			}
 
-			// ── save to store ──
+			// - save to store -----------------------
 			if st != nil {
 				name := runName
 				if name == "" {
@@ -199,21 +229,32 @@ if webFlag {
 				}
 			}
 
-			// ── generate HTML report ──
+			// - generate HTML report -------------------─
 			if reportFile, err := report.Generate(sum); err == nil {
 				fmt.Printf("report: %s\n", reportFile)
 			}
 
-			if output == "json" {
-				data, _ := json.MarshalIndent(sum, "", "  ")
-				fmt.Println("\n" + string(data))
-			} else {
-				printScenarioSummary(sum)
+			// - Phase 4: threshold evaluation --------------─
+			var thresholdFailures []string
+			if !s.Thresholds.IsZero() {
+				failures := s.Thresholds.Evaluate(sum.P99, sum.P95, sum.ErrorRate, sum.AvgRPS)
+				for _, f := range failures {
+					thresholdFailures = append(thresholdFailures, f.Message)
+					fmt.Fprintln(os.Stderr, f.Message)
+				}
+			}
+
+			// - Phase 4: write output in requested format ---------
+			writeOutput(outputFormat, outputFile, sum, thresholdFailures)
+
+			// - Phase 4: exit 1 if any threshold failed ----------
+			if len(thresholdFailures) > 0 {
+				os.Exit(1)
 			}
 			return
 		}
 
-		// ── SINGLE URL MODE ────────────────────────────────────────────────
+		// - SINGLE URL MODE ------------------------
 		dur, err := time.ParseDuration(duration)
 		if err != nil {
 			fmt.Println("invalid duration:", err)
@@ -225,19 +266,17 @@ if webFlag {
 		defer cancelTimeout()
 		defer cancelSignal()
 
-		// ── web dashboard ──
-		// ── web dashboard ──
-var dash *dashboard.Server
-if webFlag {
-    st, err := store.New("runs.db")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    dash = dashboard.New(cancelSignal, st)
-    dash.Start(":7070")
-    fmt.Println("dashboard: http://localhost:7070")
-}
+		// - web dashboard -------------------------
+		var dash *dashboard.Server
+		if webFlag {
+			dashSt, err := store.New("runs.db")
+			if err != nil {
+				log.Fatal(err)
+			}
+			dash = dashboard.New(cancelSignal, dashSt)
+			dash.Start(":7070")
+			fmt.Println("dashboard: http://localhost:7070")
+		}
 
 		var limiter *rate.Limiter
 		if rps > 0 {
@@ -252,7 +291,7 @@ if webFlag {
 
 		start := time.Now()
 
-		// ── broadcast to dashboard every 500ms ──
+		// - broadcast to dashboard every 500ms -
 		if dash != nil {
 			dash.StartBroadcasting(func() dashboard.MetricsSnapshot {
 				elapsed := time.Since(start)
@@ -266,6 +305,29 @@ if webFlag {
 					TotalReqs: agg.TotalRequests(),
 				}
 			}, ctx)
+		}
+
+
+		if promSnap != nil {
+			go func() {
+				tick := time.NewTicker(500 * time.Millisecond)
+				defer tick.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-tick.C:
+						elapsed := time.Since(start)
+						promSnap.SetRPS(agg.RPS(elapsed))
+						promSnap.LatencyP99Ms.Store(agg.P99())
+						promSnap.LatencyP95Ms.Store(agg.P95())
+						promSnap.LatencyP50Ms.Store(agg.P50())
+						promSnap.ErrorTotal.Store(agg.ErrorCount())
+						promSnap.RequestsTotal.Store(agg.TotalRequests())
+						promSnap.VUsActive.Store(int64(vus))
+					}
+				}
+			}()
 		}
 
 		headerMap := map[string]string{}
@@ -345,7 +407,7 @@ if webFlag {
 			ErrorRate:     agg.ErrorRate(),
 		}
 
-		// ── save to store ──
+	
 		if st != nil {
 			name := runName
 			if name == "" {
@@ -359,18 +421,56 @@ if webFlag {
 			}
 		}
 
-		// ── generate HTML report ──
+		// - generate HTML report ---------------------─
 		if reportFile, err := report.Generate(sum); err == nil {
 			fmt.Printf("report: %s\n", reportFile)
 		}
 
-		if output == "json" {
-			data, _ := json.MarshalIndent(sum, "", "  ")
-			fmt.Println("\n" + string(data))
+		
+		writeOutput(outputFormat, outputFile, sum, nil)
+	},
+}
+
+
+func writeOutput(format, filePath string, sum report.Summary, thresholdFailures []string) {
+	// Decide where to write: file or stdout.
+	w := os.Stdout
+	if filePath != "" {
+		f, err := os.Create(filePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not create output file %q: %v\n", filePath, err)
+		} else {
+			defer f.Close()
+			w = f
+		}
+	}
+
+	var err error
+	switch format {
+	case "json":
+		err = output.WriteJSON(w, sum)
+	case "csv":
+		err = output.WriteCSV(w, sum)
+	case "junit":
+		err = output.WriteJUnit(w, sum, thresholdFailures)
+	default: // "text"
+		if sum.ScenarioName != "" {
+			printScenarioSummary(sum)
 		} else {
 			printSingleSummary(sum, vus)
 		}
-	},
+
+		if len(thresholdFailures) > 0 {
+			fmt.Println()
+			for _, msg := range thresholdFailures {
+				fmt.Println(msg)
+			}
+		}
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: output error: %v\n", err)
+	}
 }
 
 func printScenarioSummary(sum report.Summary) {
@@ -417,19 +517,23 @@ func printSingleSummary(sum report.Summary, vus int) {
 }
 
 func init() {
-	runCmd.Flags().StringVar(&url,      "url",      "",    "Target URL")
-	runCmd.Flags().IntVar(&vus,         "vus",      10,    "Virtual users")
+	runCmd.Flags().StringVar(&url, "url", "", "Target URL")
+	runCmd.Flags().IntVar(&vus, "vus", 10, "Virtual users")
 	runCmd.Flags().StringVar(&duration, "duration", "30s", "Test duration")
-	runCmd.Flags().IntVar(&rps,         "rps",      0,     "Max requests per second (0 = unlimited)")
-	runCmd.Flags().StringVar(&output,   "output",   "text","Output format: text or json")
+	runCmd.Flags().IntVar(&rps, "rps", 0, "Max requests per second (0 = unlimited)")
+	runCmd.Flags().StringVar(&outputFormat, "output", "text", "Output format: text | json | csv | junit")
 	runCmd.Flags().StringVar(&flagScenarioFile, "scenario", "", "Path to YAML scenario file")
-	runCmd.Flags().StringVar(&method,   "method",   "GET", "HTTP method (GET, POST, PUT, DELETE)")
+	runCmd.Flags().StringVar(&method, "method", "GET", "HTTP method (GET, POST, PUT, DELETE)")
 	runCmd.Flags().StringArrayVar(&headers, "header", []string{}, "HTTP headers (e.g. --header 'Authorization: Bearer token')")
-	runCmd.Flags().StringVar(&timeout,  "timeout",  "10s", "Per-request timeout")
-	runCmd.Flags().StringVar(&basicAuth,"auth",     "",    "Basic auth in user:password format")
+	runCmd.Flags().StringVar(&timeout, "timeout", "10s", "Per-request timeout")
+	runCmd.Flags().StringVar(&basicAuth, "auth", "", "Basic auth in user:password format")
 	runCmd.Flags().IntVar(&expectedStatus, "expected-status", 0, "Expected HTTP status code (0 = any)")
-	runCmd.Flags().BoolVar(&webFlag,    "web",      false, "Enable live web dashboard on :7070")
-	runCmd.Flags().StringVar(&runName,  "name",     "",    "Name for this run (saved to history)")
+	runCmd.Flags().BoolVar(&webFlag, "web", false, "Enable live web dashboard on :7070")
+	runCmd.Flags().StringVar(&runName, "name", "", "Name for this run (saved to history)")
+
+	// Phase 4 flags
+	runCmd.Flags().StringVar(&metricsAddr, "metrics-addr", "", "Expose Prometheus /metrics on this address during run (e.g. :9090)")
+	runCmd.Flags().StringVar(&outputFile, "output-file", "", "Write output to file (default: stdout)")
 
 	rootCmd.AddCommand(runCmd)
 }

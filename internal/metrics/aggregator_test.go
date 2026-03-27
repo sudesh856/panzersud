@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sudesh856/LoadForge/internal/worker"
+	"github.com/sudesh856/suddpanzer/internal/worker"
 )
 
 func TestAggregator(t *testing.T) {

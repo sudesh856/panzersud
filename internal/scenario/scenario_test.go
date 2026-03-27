@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/sudesh856/LoadForge/internal/scenario"
+	"github.com/sudesh856/suddpanzer/internal/scenario"
 )
 
 func writeTempYAML(t *testing.T, content string) string {

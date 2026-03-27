@@ -25,5 +25,8 @@ vendor/
 .idea/
 
 
-# Ignore LoadForge reports
+
 report-*.html          # root folder reports
+
+*.csv
+*.xml

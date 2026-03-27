@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sudesh856/LoadForge/internal/scenario"
+	"github.com/sudesh856/suddpanzer/internal/scenario"
 )
 
 func TestReplaceVars_UUID(t *testing.T) {

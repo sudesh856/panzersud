@@ -1,0 +1,13 @@
+name: threshold-fail-test
+stages:
+  - duration: 10s
+    target_vus: 5
+endpoints:
+  - name: health
+    url: https://httpbin.org/get
+    method: GET
+    weight: 1
+    expected_status: 200
+thresholds:
+  p99_ms: 1
+  min_rps: 999999

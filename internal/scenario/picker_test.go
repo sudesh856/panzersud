@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/sudesh856/LoadForge/internal/scenario"
+	"github.com/sudesh856/suddpanzer/internal/scenario"
 )
 
 func TestPickEndpoint_Distribution(t *testing.T) {

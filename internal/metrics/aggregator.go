@@ -3,7 +3,7 @@ import (
 	"sync"
 	"time"
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
-	"github.com/sudesh856/LoadForge/internal/worker"
+	"github.com/sudesh856/suddpanzer/internal/worker"
 )
 
 type Aggregator struct {

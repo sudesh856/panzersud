@@ -1,0 +1,82 @@
+# .github/workflows/load-test.yml
+#
+# suddpanzer CI — runs your load test on every push to main,
+# fails the job if any threshold is breached, and publishes
+# JUnit results to GitHub's Tests tab.
+#
+# Setup:
+#   1. Add API_TOKEN to repo secrets (Settings → Secrets → Actions)
+#   2. Set SUDDPANZER_VERSION to your latest release tag
+
+name: Load Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:   # manual trigger from Actions UI
+
+env:
+  SUDDPANZER_VERSION: "0.3.0"   # ← update to your latest tag
+  SCENARIO: "examples/load-test.yaml"
+
+jobs:
+  load-test:
+    name: suddpanzer load test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Install suddpanzer — single binary, no deps
+      - name: Install suddpanzer
+        run: |
+          curl -sSL \
+            https://github.com/sudesh856/suddpanzer/releases/download/v${{ env.SUDDPANZER_VERSION }}/suddpanzer-linux-amd64.tar.gz \
+            | tar -xz -C /usr/local/bin suddpanzer
+          suddpanzer --version
+
+      # Run the load test.
+      # --output junit  → JUnit XML for GitHub Tests tab
+      # --output-file   → save to file so we can upload it
+      # exit code 1 if any threshold in the YAML is breached
+      - name: Run load test
+        env:
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+          suddpanzer run \
+            --scenario ${{ env.SCENARIO }} \
+            --output junit \
+            --output-file suddpanzer-results.xml
+
+      # Publish per-threshold pass/fail to the Actions Tests tab
+      - name: Publish test results
+        uses: mikepenz/action-junit-report@v4
+        if: always()
+        with:
+          report_paths: suddpanzer-results.xml
+          check_name: "suddpanzer load test"
+          fail_on_failure: true
+
+      # Also produce a JSON summary artifact for audit trail
+      - name: Generate JSON summary
+        if: always()
+        env:
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+          suddpanzer run \
+            --scenario ${{ env.SCENARIO }} \
+            --output json \
+            --output-file suddpanzer-summary.json || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: suddpanzer-results-${{ github.run_id }}
+          path: |
+            suddpanzer-results.xml
+            suddpanzer-summary.json
+          retention-days: 30

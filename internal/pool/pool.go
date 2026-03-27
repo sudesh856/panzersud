@@ -3,7 +3,7 @@ package pool
 import (
 	"context"
 
-	"github.com/sudesh856/LoadForge/internal/worker"
+	"github.com/sudesh856/suddpanzer/internal/worker"
 )
 type Pool struct {
 	jobs chan worker.Job

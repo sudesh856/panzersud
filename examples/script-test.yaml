@@ -1,0 +1,10 @@
+name: js-scripting-test
+stages:
+  - duration: 5s
+    target_vus: 5
+
+endpoints:
+  - name: scripted-post
+    url: https://httpbin.org/post
+    script: ./examples/scripts/login.js
+    weight: 100

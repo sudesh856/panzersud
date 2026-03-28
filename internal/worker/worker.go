@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/sudesh856/suddpanzer/internal/scripting"
 )
 
 type Job struct {
@@ -18,6 +20,11 @@ type Job struct {
 	ExpectedStatus int
 	Timeout        time.Duration
 	BasicAuth      string
+
+	// ScriptPool is set when this endpoint uses a JS script.
+	// Pool is shared across all workers; each worker calls Clone() once at startup
+	// to get its own Engine (goja is NOT goroutine-safe).
+	ScriptPool *scripting.ScriptPool
 }
 
 type Result struct {
@@ -29,7 +36,7 @@ type Result struct {
 	EndpointName string
 }
 
-// one shared client per worker goroutine — created once, reused forever
+// one shared transport for all workers
 var sharedTransport = &http.Transport{
 	ForceAttemptHTTP2:     true,
 	DisableKeepAlives:     false,
@@ -47,6 +54,10 @@ func RunWorker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
 		Transport: sharedTransport,
 	}
 
+	// Each worker keeps ONE engine per ScriptPool it encounters.
+	// Key = pointer to ScriptPool, value = compiled Engine for this goroutine.
+	engines := make(map[*scripting.ScriptPool]*scripting.Engine)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -59,6 +70,48 @@ func RunWorker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
 			if job.Timeout > 0 {
 				client.Timeout = job.Timeout
 			}
+
+			// ── JS scripting override ──────────────────────────────────────────
+			if job.ScriptPool != nil {
+				eng, exists := engines[job.ScriptPool]
+				if !exists {
+					// first time this worker sees this ScriptPool → clone an engine
+					var err error
+					eng, err = job.ScriptPool.Clone()
+					if err != nil {
+						results <- Result{
+							Err:          fmt.Errorf("script engine init failed: %w", err),
+							EndpointName: job.Name,
+						}
+						continue
+					}
+					engines[job.ScriptPool] = eng
+				}
+
+				override, err := eng.Call()
+				if err != nil {
+					results <- Result{
+						Err:          fmt.Errorf("script call failed: %w", err),
+						EndpointName: job.Name,
+					}
+					continue
+				}
+
+				// apply override — script wins over static YAML values
+				if override.Method != "" {
+					job.Method = override.Method
+				}
+				if override.Body != "" {
+					job.Body = override.Body
+				}
+				for k, v := range override.Headers {
+					if job.Headers == nil {
+						job.Headers = make(map[string]string)
+					}
+					job.Headers[k] = v
+				}
+			}
+			// ──────────────────────────────────────────────────────────────────
 
 			start := time.Now()
 
@@ -74,7 +127,7 @@ func RunWorker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
 
 			req, err := http.NewRequestWithContext(ctx, method, job.URL, bodyReader)
 			if err != nil {
-				results <- Result{Latency: time.Since(start), Err: err}
+				results <- Result{Latency: time.Since(start), Err: err, EndpointName: job.Name}
 				continue
 			}
 
@@ -93,7 +146,7 @@ func RunWorker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
 			latency := time.Since(start)
 
 			if err != nil {
-				results <- Result{Latency: latency, Err: err}
+				results <- Result{Latency: latency, Err: err, EndpointName: job.Name}
 				continue
 			}
 

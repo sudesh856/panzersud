@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"github.com/sudesh856/suddpanzer/internal/scripting"
 
 	"github.com/spf13/cobra"
 	"github.com/sudesh856/suddpanzer/internal/controller"
@@ -181,6 +182,18 @@ var runCmd = &cobra.Command{
 				}
 			}()
 
+			scriptPools := make(map[string]*scripting.ScriptPool)
+			for _, ep := range s.Endpoints {
+				if ep.Script != "" {
+					sp, err := scripting.NewScriptPoolFromFile(ep.Script)
+					if err != nil {
+						log.Printf("warning: script load failed for %q: %v", ep.Name, err)
+					} else {
+						scriptPools[ep.Name] = sp
+					}
+				}
+			}
+
 			go func() {
 				defer wg.Done()
 				for {
@@ -192,7 +205,7 @@ var runCmd = &cobra.Command{
 						vars := chainStore.ToVars()
 						epURL := scenario.ReplaceVars(ep.URL, vars)
 						body := scenario.ReplaceVars(ep.Body, vars)
-						p.Submit(worker.Job{
+						job := worker.Job{
 							Name:           ep.Name,
 							URL:            epURL,
 							Method:         ep.Method,
@@ -200,7 +213,11 @@ var runCmd = &cobra.Command{
 							ExpectedStatus: ep.ExpectedStatus,
 							Headers:        ep.Headers,
 							BasicAuth:      ep.BasicAuth,
-						})
+						}
+						if sp, ok := scriptPools[ep.Name]; ok {
+							job.ScriptPool = sp
+						}
+						p.Submit(job)
 						<-ctrl.Semaphore
 					}
 				}
@@ -211,7 +228,12 @@ var runCmd = &cobra.Command{
 			time.Sleep(100 * time.Millisecond)
 
 			elapsed := time.Since(start)
+			scenarioURL := ""
+			if len(s.Endpoints) > 0 {
+				scenarioURL = s.Endpoints[0].URL
+			}
 			sum := report.Summary{
+				URL:           scenarioURL,
 				ScenarioName:  s.Name,
 				DurationSecs:  elapsed.Seconds(),
 				TotalRequests: agg.TotalRequests(),

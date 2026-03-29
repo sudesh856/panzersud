@@ -13,12 +13,13 @@ A fast, open-source HTTP load testing tool written in Go — with a live web das
 
 
 **Terminal run**
-![Terminal run](docs/demoterminal.gif)
+<video src="https://github.com/user-attachments/assets/d26e6b60-1cfe-4d95-9a1f-ae78161acff6" loop control></video>
 
 **Web dashboard**
 <video src="https://github.com/user-attachments/assets/3678d992-1896-4b43-81d6-312851cac810" controls autoplay loop></video>
+
 **YAML scenario**
-![YAML scenario](docs/YAMLscenario.gif)
+<video src="https://github.com/user-attachments/assets/80ff85bd-8dda-41cf-82ff-a94bbaf3d484" controls loop></video>
 
 </div>
 

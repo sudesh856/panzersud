@@ -245,7 +245,6 @@ sudd run [flags]
 - Single binary, zero runtime dependencies
 
 **Web dashboard**
-![Web dashboard](docs/demodashboard.gif)
 - Live latency percentile chart and RPS vs error rate chart over WebSocket
 - Per-endpoint breakdown table
 - Abort button — graceful shutdown mid-run from the browser

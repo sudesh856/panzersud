@@ -25,13 +25,13 @@
 </head>
 <body>
 <h1>blast — Run Report</h1>
-<div class="meta">Generated: 2026-03-28 21:19:42 &nbsp;|&nbsp; URL: https://httpbin.org/post</div>
+<div class="meta">Generated: 2026-03-29 13:57:54 &nbsp;|&nbsp; Scenario: lua-scripting-test &nbsp;|&nbsp; URL: https://httpbin.org/post</div>
 
 <div class="stats">
-  <div class="stat"><div class="value">12.5</div><div class="label">Avg RPS</div></div>
-  <div class="stat"><div class="value">1298ms</div><div class="label">p99 Latency</div></div>
-  <div class="stat"><div class="value">10.94%</div><div class="label">Error Rate</div></div>
-  <div class="stat"><div class="value">64</div><div class="label">Total Requests</div></div>
+  <div class="stat"><div class="value">8.0</div><div class="label">Avg RPS</div></div>
+  <div class="stat"><div class="value">1810ms</div><div class="label">p99 Latency</div></div>
+  <div class="stat"><div class="value">24.39%</div><div class="label">Error Rate</div></div>
+  <div class="stat"><div class="value">41</div><div class="label">Total Requests</div></div>
 </div>
 
 <div class="chart-grid">
@@ -49,17 +49,17 @@
   <h2>Full Summary</h2>
   <table>
     <tr><td>Duration</td><td>5.1s</td></tr>
-    <tr><td>Total Requests</td><td>64</td></tr>
-    <tr><td>Avg RPS</td><td>12.54</td></tr>
-    <tr><td>p50</td><td>278ms</td></tr>
-    <tr><td>p75</td><td>292ms</td></tr>
-    <tr><td>p90</td><td>898ms</td></tr>
-    <tr><td>p95</td><td>1298ms</td></tr>
-    <tr><td>p99</td><td>1298ms</td></tr>
-    <tr><td>p999</td><td>1460ms</td></tr>
-    <tr><td>Max</td><td>1460ms</td></tr>
-    <tr><td>Errors</td><td>7</td></tr>
-    <tr><td>Error Rate</td><td>10.94%</td></tr>
+    <tr><td>Total Requests</td><td>41</td></tr>
+    <tr><td>Avg RPS</td><td>8.03</td></tr>
+    <tr><td>p50</td><td>280ms</td></tr>
+    <tr><td>p75</td><td>296ms</td></tr>
+    <tr><td>p90</td><td>587ms</td></tr>
+    <tr><td>p95</td><td>1211ms</td></tr>
+    <tr><td>p99</td><td>1810ms</td></tr>
+    <tr><td>p999</td><td>1810ms</td></tr>
+    <tr><td>Max</td><td>1810ms</td></tr>
+    <tr><td>Errors</td><td>10</td></tr>
+    <tr><td>Error Rate</td><td>24.39%</td></tr>
   </table>
 </div>
 
@@ -70,7 +70,7 @@ new Chart(document.getElementById('latencyChart'), {
     labels: ['p50','p75','p90','p95','p99','p999','Max'],
     datasets: [{
       label: 'ms',
-      data: [278,292,898,1298,1298,1460,1460],
+      data: [280,296,587,1211,1810,1810,1810],
       backgroundColor: ['#00ff88','#00dd77','#ffaa00','#ff8800','#ff4444','#cc0000','#880000'],
     }]
   },
@@ -83,10 +83,10 @@ new Chart(document.getElementById('distChart'), {
     labels: ['p50','p50–p95','p95–p99','p99+'],
     datasets: [{
       data: [
-        278,
-        1298 - 278,
-        1298 - 1298,
-        1460 - 1298
+        280,
+        1211 - 280,
+        1810 - 1211,
+        1810 - 1810
       ],
       backgroundColor: ['#00ff88','#ffaa00','#ff8800','#ff4444'],
     }]

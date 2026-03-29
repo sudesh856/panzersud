@@ -21,10 +21,9 @@ type Job struct {
 	Timeout        time.Duration
 	BasicAuth      string
 
-	// ScriptPool is set when this endpoint uses a JS script.
-	// Pool is shared across all workers; each worker calls Clone() once at startup
-	// to get its own Engine (goja is NOT goroutine-safe).
 	ScriptPool *scripting.ScriptPool
+
+	LuaScriptPool *scripting.LuaScriptPool
 }
 
 type Result struct {
@@ -36,7 +35,6 @@ type Result struct {
 	EndpointName string
 }
 
-// one shared transport for all workers
 var sharedTransport = &http.Transport{
 	ForceAttemptHTTP2:     true,
 	DisableKeepAlives:     false,
@@ -54,9 +52,14 @@ func RunWorker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
 		Transport: sharedTransport,
 	}
 
-	// Each worker keeps ONE engine per ScriptPool it encounters.
-	// Key = pointer to ScriptPool, value = compiled Engine for this goroutine.
-	engines := make(map[*scripting.ScriptPool]*scripting.Engine)
+	jsEngines := make(map[*scripting.ScriptPool]*scripting.Engine)
+	luaEngines := make(map[*scripting.LuaScriptPool]*scripting.LuaEngine)
+
+	defer func() {
+		for _, eng := range luaEngines {
+			eng.Close()
+		}
+	}()
 
 	for {
 		select {
@@ -67,51 +70,43 @@ func RunWorker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
 				return
 			}
 
-			if job.Timeout > 0 {
-				client.Timeout = job.Timeout
-			}
-
-			// ── JS scripting override ──────────────────────────────────────────
 			if job.ScriptPool != nil {
-				eng, exists := engines[job.ScriptPool]
+				eng, exists := jsEngines[job.ScriptPool]
 				if !exists {
-					// first time this worker sees this ScriptPool → clone an engine
 					var err error
 					eng, err = job.ScriptPool.Clone()
 					if err != nil {
-						results <- Result{
-							Err:          fmt.Errorf("script engine init failed: %w", err),
-							EndpointName: job.Name,
-						}
+						results <- Result{Err: fmt.Errorf("js engine init: %w", err), EndpointName: job.Name}
 						continue
 					}
-					engines[job.ScriptPool] = eng
+					jsEngines[job.ScriptPool] = eng
 				}
-
 				override, err := eng.Call()
 				if err != nil {
-					results <- Result{
-						Err:          fmt.Errorf("script call failed: %w", err),
-						EndpointName: job.Name,
-					}
+					results <- Result{Err: fmt.Errorf("js call: %w", err), EndpointName: job.Name}
 					continue
 				}
-
-				// apply override — script wins over static YAML values
-				if override.Method != "" {
-					job.Method = override.Method
-				}
-				if override.Body != "" {
-					job.Body = override.Body
-				}
-				for k, v := range override.Headers {
-					if job.Headers == nil {
-						job.Headers = make(map[string]string)
-					}
-					job.Headers[k] = v
-				}
+				applyOverride(&job, override)
 			}
-			// ──────────────────────────────────────────────────────────────────
+
+			if job.LuaScriptPool != nil {
+				eng, exists := luaEngines[job.LuaScriptPool]
+				if !exists {
+					var err error
+					eng, err = job.LuaScriptPool.Clone()
+					if err != nil {
+						results <- Result{Err: fmt.Errorf("lua engine init: %w", err), EndpointName: job.Name}
+						continue
+					}
+					luaEngines[job.LuaScriptPool] = eng
+				}
+				override, err := eng.Call()
+				if err != nil {
+					results <- Result{Err: fmt.Errorf("lua call: %w", err), EndpointName: job.Name}
+					continue
+				}
+				applyOverride(&job, override)
+			}
 
 			start := time.Now()
 
@@ -125,8 +120,17 @@ func RunWorker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
 				bodyReader = strings.NewReader(job.Body)
 			}
 
-			req, err := http.NewRequestWithContext(ctx, method, job.URL, bodyReader)
+			reqCtx := ctx
+			var cancelReq context.CancelFunc
+			if job.Timeout > 0 {
+				reqCtx, cancelReq = context.WithTimeout(ctx, job.Timeout)
+			}
+
+			req, err := http.NewRequestWithContext(reqCtx, method, job.URL, bodyReader)
 			if err != nil {
+				if cancelReq != nil {
+					cancelReq()
+				}
 				results <- Result{Latency: time.Since(start), Err: err, EndpointName: job.Name}
 				continue
 			}
@@ -143,6 +147,9 @@ func RunWorker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
 			}
 
 			resp, err := client.Do(req)
+			if cancelReq != nil {
+				cancelReq()
+			}
 			latency := time.Since(start)
 
 			if err != nil {
@@ -167,5 +174,20 @@ func RunWorker(ctx context.Context, jobs <-chan Job, results chan<- Result) {
 				Err:          resultErr,
 			}
 		}
+	}
+}
+
+func applyOverride(job *Job, o *scripting.RequestOverride) {
+	if o.Method != "" {
+		job.Method = o.Method
+	}
+	if o.Body != "" {
+		job.Body = o.Body
+	}
+	for k, v := range o.Headers {
+		if job.Headers == nil {
+			job.Headers = make(map[string]string)
+		}
+		job.Headers[k] = v
 	}
 }

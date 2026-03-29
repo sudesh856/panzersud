@@ -22,6 +22,8 @@ type Summary struct {
 	Max           int64   `json:"max_ms"`
 	Errors        int64   `json:"errors"`
 	ErrorRate     float64 `json:"error_rate_pct"`
+  ErrorBreakdown  map[string]int64 `json:"error_breakdown,omitempty"`
+
 }
 
 const htmlTmpl = `<!DOCTYPE html>

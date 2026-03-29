@@ -1,0 +1,19 @@
+name: ws-load-test
+stages:
+  - duration: 5s
+    target_vus: 10
+  - duration: 20s
+    target_vus: 50
+  - duration: 5s
+    target_vus: 0
+
+endpoints:
+  - name: ws-echo
+    ws_url:          ws://localhost:8080/ws
+    ws_payload:      '{"action":"ping","id":1}'
+    ws_read_timeout: 5s
+    weight: 100
+
+thresholds:
+  p99_ms: 100
+  error_rate_pct: 1.0

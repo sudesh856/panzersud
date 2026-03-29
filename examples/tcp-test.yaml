@@ -1,0 +1,20 @@
+name: tcp-load-test
+stages:
+  - duration: 5s
+    target_vus: 10
+  - duration: 20s
+    target_vus: 50
+  - duration: 5s
+    target_vus: 0
+
+endpoints:
+  - name: tcp-echo
+    tcp_target:      localhost:9000
+    tcp_payload:     "PING\n"
+    tcp_read_bytes:  5       
+    tcp_read_timeout: 5s
+    weight: 100
+
+thresholds:
+  p99_ms: 50
+  error_rate_pct: 1.0

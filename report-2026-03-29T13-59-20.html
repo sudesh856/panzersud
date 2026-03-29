@@ -25,13 +25,13 @@
 </head>
 <body>
 <h1>blast — Run Report</h1>
-<div class="meta">Generated: 2026-03-28 21:03:20 &nbsp;|&nbsp; Scenario: js-scripting-test</div>
+<div class="meta">Generated: 2026-03-29 13:59:20 &nbsp;|&nbsp; URL: https://httpbin.org/post</div>
 
 <div class="stats">
-  <div class="stat"><div class="value">7290.3</div><div class="label">Avg RPS</div></div>
-  <div class="stat"><div class="value">1ms</div><div class="label">p99 Latency</div></div>
-  <div class="stat"><div class="value">100.00%</div><div class="label">Error Rate</div></div>
-  <div class="stat"><div class="value">37179</div><div class="label">Total Requests</div></div>
+  <div class="stat"><div class="value">13.5</div><div class="label">Avg RPS</div></div>
+  <div class="stat"><div class="value">1166ms</div><div class="label">p99 Latency</div></div>
+  <div class="stat"><div class="value">11.59%</div><div class="label">Error Rate</div></div>
+  <div class="stat"><div class="value">69</div><div class="label">Total Requests</div></div>
 </div>
 
 <div class="chart-grid">
@@ -49,17 +49,17 @@
   <h2>Full Summary</h2>
   <table>
     <tr><td>Duration</td><td>5.1s</td></tr>
-    <tr><td>Total Requests</td><td>37179</td></tr>
-    <tr><td>Avg RPS</td><td>7290.31</td></tr>
-    <tr><td>p50</td><td>1ms</td></tr>
-    <tr><td>p75</td><td>1ms</td></tr>
-    <tr><td>p90</td><td>1ms</td></tr>
-    <tr><td>p95</td><td>1ms</td></tr>
-    <tr><td>p99</td><td>1ms</td></tr>
-    <tr><td>p999</td><td>1ms</td></tr>
-    <tr><td>Max</td><td>1ms</td></tr>
-    <tr><td>Errors</td><td>37179</td></tr>
-    <tr><td>Error Rate</td><td>100.00%</td></tr>
+    <tr><td>Total Requests</td><td>69</td></tr>
+    <tr><td>Avg RPS</td><td>13.53</td></tr>
+    <tr><td>p50</td><td>272ms</td></tr>
+    <tr><td>p75</td><td>306ms</td></tr>
+    <tr><td>p90</td><td>572ms</td></tr>
+    <tr><td>p95</td><td>1166ms</td></tr>
+    <tr><td>p99</td><td>1166ms</td></tr>
+    <tr><td>p999</td><td>1214ms</td></tr>
+    <tr><td>Max</td><td>1214ms</td></tr>
+    <tr><td>Errors</td><td>8</td></tr>
+    <tr><td>Error Rate</td><td>11.59%</td></tr>
   </table>
 </div>
 
@@ -70,7 +70,7 @@ new Chart(document.getElementById('latencyChart'), {
     labels: ['p50','p75','p90','p95','p99','p999','Max'],
     datasets: [{
       label: 'ms',
-      data: [1,1,1,1,1,1,1],
+      data: [272,306,572,1166,1166,1214,1214],
       backgroundColor: ['#00ff88','#00dd77','#ffaa00','#ff8800','#ff4444','#cc0000','#880000'],
     }]
   },
@@ -83,10 +83,10 @@ new Chart(document.getElementById('distChart'), {
     labels: ['p50','p50–p95','p95–p99','p99+'],
     datasets: [{
       data: [
-        1,
-        1 - 1,
-        1 - 1,
-        1 - 1
+        272,
+        1166 - 272,
+        1166 - 1166,
+        1214 - 1166
       ],
       backgroundColor: ['#00ff88','#ffaa00','#ff8800','#ff4444'],
     }]

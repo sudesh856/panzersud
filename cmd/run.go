@@ -11,15 +11,19 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/sudesh856/suddpanzer/internal/grpcworker"
 	"github.com/sudesh856/suddpanzer/internal/scripting"
+	"github.com/sudesh856/suddpanzer/internal/tcpworker"
+	"github.com/sudesh856/suddpanzer/internal/wsworker"
 
 	"github.com/spf13/cobra"
 	"github.com/sudesh856/suddpanzer/internal/controller"
 	"github.com/sudesh856/suddpanzer/internal/dashboard"
 	"github.com/sudesh856/suddpanzer/internal/metrics"
 	"github.com/sudesh856/suddpanzer/internal/output"
-	promserver "github.com/sudesh856/suddpanzer/internal/prometheus"
 	"github.com/sudesh856/suddpanzer/internal/pool"
+	promserver "github.com/sudesh856/suddpanzer/internal/prometheus"
 	"github.com/sudesh856/suddpanzer/internal/ramp"
 	"github.com/sudesh856/suddpanzer/internal/report"
 	"github.com/sudesh856/suddpanzer/internal/reporter"
@@ -43,8 +47,8 @@ var expectedStatus int
 var webFlag bool
 var runName string
 
-var metricsAddr string 
-var outputFile string  
+var metricsAddr string
+var outputFile string
 var distributedFile string // Phase 5
 
 var runCmd = &cobra.Command{
@@ -100,7 +104,7 @@ var runCmd = &cobra.Command{
 			defer cancelTimeout()
 			defer cancelSignal()
 
-			// - web dashboard 
+			// - web dashboard
 			var dash *dashboard.Server
 			if webFlag {
 				dashSt, err := store.New("runs.db")
@@ -122,10 +126,23 @@ var runCmd = &cobra.Command{
 				}
 			}
 
+			// Create HTTP, gRPC, WebSocket, and TCP pools
 			p := pool.New(1000)
 			p.Start(ctx, maxVUs)
+
+			gp := grpcworker.NewPool(1000)
+			gp.Start(ctx, maxVUs)
+
+			wp := wsworker.NewPool(1000)
+			wp.Start(ctx, maxVUs)
+
+			tp := tcpworker.NewPool(1000)
+			tp.Start(ctx, maxVUs)
+
 			agg := metrics.New()
-			agg.Start(p.Results())
+			// merge all result channels into one aggregator
+			mergedResults := mergeResults(p.Results(), gp.Results(), wp.Results(), tp.Results())
+			agg.Start(mergedResults)
 			start := time.Now()
 
 			// - broadcast to dashboard every 500ms -
@@ -170,7 +187,7 @@ var runCmd = &cobra.Command{
 			wg.Add(1)
 			chainStore := scenario.NewChainStore()
 			go func() {
-				for result := range p.Results() {
+				for result := range mergedResults {
 					if result.EndpointName != "" && len(result.Body) > 0 {
 						for _, ep := range s.Endpoints {
 							if ep.Name == result.EndpointName {
@@ -183,13 +200,23 @@ var runCmd = &cobra.Command{
 			}()
 
 			scriptPools := make(map[string]*scripting.ScriptPool)
+			luaScriptPools := make(map[string]*scripting.LuaScriptPool)
 			for _, ep := range s.Endpoints {
 				if ep.Script != "" {
-					sp, err := scripting.NewScriptPoolFromFile(ep.Script)
-					if err != nil {
-						log.Printf("warning: script load failed for %q: %v", ep.Name, err)
+					if strings.HasSuffix(ep.Script, ".lua") {
+						lsp, err := scripting.NewLuaScriptPoolFromFile(ep.Script)
+						if err != nil {
+							log.Printf("warning: lua script load failed for %q: %v", ep.Name, err)
+						} else {
+							luaScriptPools[ep.Name] = lsp
+						}
 					} else {
-						scriptPools[ep.Name] = sp
+						sp, err := scripting.NewScriptPoolFromFile(ep.Script)
+						if err != nil {
+							log.Printf("warning: js script load failed for %q: %v", ep.Name, err)
+						} else {
+							scriptPools[ep.Name] = sp
+						}
 					}
 				}
 			}
@@ -205,19 +232,82 @@ var runCmd = &cobra.Command{
 						vars := chainStore.ToVars()
 						epURL := scenario.ReplaceVars(ep.URL, vars)
 						body := scenario.ReplaceVars(ep.Body, vars)
-						job := worker.Job{
-							Name:           ep.Name,
-							URL:            epURL,
-							Method:         ep.Method,
-							Body:           body,
-							ExpectedStatus: ep.ExpectedStatus,
-							Headers:        ep.Headers,
-							BasicAuth:      ep.BasicAuth,
+
+						// Route gRPC, WebSocket, and TCP endpoints
+						if ep.IsGRPC() {
+							payload, err := grpcworker.BuildPayload(ep.GRPCPayload)
+							if err != nil {
+								log.Printf("grpc payload error for %q: %v", ep.Name, err)
+								<-ctrl.Semaphore
+								continue
+							}
+							gp.Submit(grpcworker.GRPCJob{
+								EndpointName: ep.Name,
+								Target:       ep.GRPCTarget,
+								Method:       ep.GRPCMethod,
+								Payload:      payload,
+								Headers:      ep.Headers,
+								Insecure:     ep.GRPCInsecure,
+								Timeout:      10 * time.Second,
+							})
+						} else if ep.IsWS() {
+							wp.Submit(wsworker.WSJob{
+								EndpointName: ep.Name,
+								URL:          ep.WSUrl,
+								Payload:      scenario.ReplaceVars(ep.WSPayload, vars),
+								Headers:      ep.Headers,
+								ReadTimeout:  ep.ParsedWSReadTimeout,
+							})
+						} else if ep.IsTCP() {
+							tp.Submit(tcpworker.TCPJob{
+								EndpointName: ep.Name,
+								Target:       ep.TCPTarget,
+								Payload:      scenario.ReplaceVars(ep.TCPPayload, vars),
+								ReadBytes:    ep.TCPReadBytes,
+								ReadTimeout:  ep.ParsedTCPReadTimeout,
+							})
+						} else {
+							// ── CHANGE 1: Add Lua routing in the job builder ─────────────
+							job := worker.Job{
+								Name:           ep.Name,
+								URL:            epURL,
+								Method:         ep.Method,
+								Body:           body,
+								ExpectedStatus: ep.ExpectedStatus,
+								Headers:        ep.Headers,
+								BasicAuth:      ep.BasicAuth,
+							}
+							if ep.Script != "" {
+								if strings.HasSuffix(ep.Script, ".lua") {
+									// Lua script
+									if lsp, ok := luaScriptPools[ep.Name]; ok {
+										job.LuaScriptPool = lsp
+									} else {
+										lsp, err := scripting.NewLuaScriptPoolFromFile(ep.Script)
+										if err != nil {
+											log.Printf("warning: lua script load failed for %q: %v", ep.Name, err)
+										} else {
+											job.LuaScriptPool = lsp
+											luaScriptPools[ep.Name] = lsp
+										}
+									}
+								} else {
+									// JS script (default)
+									if sp, ok := scriptPools[ep.Name]; ok {
+										job.ScriptPool = sp
+									} else {
+										sp, err := scripting.NewScriptPoolFromFile(ep.Script)
+										if err != nil {
+											log.Printf("warning: js script load failed for %q: %v", ep.Name, err)
+										} else {
+											job.ScriptPool = sp
+											scriptPools[ep.Name] = sp
+										}
+									}
+								}
+							}
+							p.Submit(job)
 						}
-						if sp, ok := scriptPools[ep.Name]; ok {
-							job.ScriptPool = sp
-						}
-						p.Submit(job)
 						<-ctrl.Semaphore
 					}
 				}
@@ -247,6 +337,7 @@ var runCmd = &cobra.Command{
 				Max:           agg.Max(),
 				Errors:        agg.ErrorCount(),
 				ErrorRate:     agg.ErrorRate(),
+				ErrorBreakdown: agg.ErrorBreakdown(),
 			}
 
 			// - save to store -----------------------
@@ -261,12 +352,12 @@ var runCmd = &cobra.Command{
 				}
 			}
 
-			// - generate HTML report -------------------─
+			// - generate HTML report -------------------
 			if reportFile, err := report.Generate(sum); err == nil {
 				fmt.Printf("report: %s\n", reportFile)
 			}
 
-			// - Phase 4: threshold evaluation --------------─
+			// - Phase 4: threshold evaluation --------------
 			var thresholdFailures []string
 			if !s.Thresholds.IsZero() {
 				failures := s.Thresholds.Evaluate(sum.P99, sum.P95, sum.ErrorRate, sum.AvgRPS)
@@ -338,7 +429,6 @@ var runCmd = &cobra.Command{
 				}
 			}, ctx)
 		}
-
 
 		if promSnap != nil {
 			go func() {
@@ -437,9 +527,9 @@ var runCmd = &cobra.Command{
 			Max:           agg.Max(),
 			Errors:        agg.ErrorCount(),
 			ErrorRate:     agg.ErrorRate(),
+			ErrorBreakdown: agg.ErrorBreakdown(),
 		}
 
-	
 		if st != nil {
 			name := runName
 			if name == "" {
@@ -453,12 +543,11 @@ var runCmd = &cobra.Command{
 			}
 		}
 
-		// - generate HTML report ---------------------─
+		// - generate HTML report ---------------------
 		if reportFile, err := report.Generate(sum); err == nil {
 			fmt.Printf("report: %s\n", reportFile)
 		}
 
-		
 		writeOutput(outputFormat, outputFile, sum, nil)
 	},
 }
@@ -562,7 +651,12 @@ func printScenarioSummary(sum report.Summary) {
 	fmt.Printf("-----------------------------------\n")
 	fmt.Printf("Errors         : %d\n", sum.Errors)
 	fmt.Printf("Error Rate     : %.2f%%\n", sum.ErrorRate)
-	fmt.Printf("=================================\n")
+	if len(sum.ErrorBreakdown) > 0 {
+    for msg, count := range sum.ErrorBreakdown {
+        fmt.Printf("  %dx %s\n", count, msg)
+    }
+}
+fmt.Printf("=================================\n")
 }
 
 func printSingleSummary(sum report.Summary, vus int) {
@@ -584,7 +678,33 @@ func printSingleSummary(sum report.Summary, vus int) {
 	fmt.Printf("-----------------------------------\n")
 	fmt.Printf("Errors         : %d\n", sum.Errors)
 	fmt.Printf("Error Rate     : %.2f%%\n", sum.ErrorRate)
-	fmt.Printf("===================================\n")
+	if len(sum.ErrorBreakdown) > 0 {
+    for msg, count := range sum.ErrorBreakdown {
+        fmt.Printf("  %dx %s\n", count, msg)
+    }
+}
+fmt.Printf("=================================\n")
+}
+
+// mergeResults fans multiple result channels into one.
+// This lets the metrics aggregator consume HTTP + gRPC + WebSocket + TCP results together.
+func mergeResults(channels ...<-chan worker.Result) <-chan worker.Result {
+	merged := make(chan worker.Result, 2000)
+	var wg sync.WaitGroup
+	for _, ch := range channels {
+		wg.Add(1)
+		go func(c <-chan worker.Result) {
+			defer wg.Done()
+			for r := range c {
+				merged <- r
+			}
+		}(ch)
+	}
+	go func() {
+		wg.Wait()
+		close(merged)
+	}()
+	return merged
 }
 
 func init() {
@@ -605,7 +725,7 @@ func init() {
 	// Phase 4 flags
 	runCmd.Flags().StringVar(&metricsAddr, "metrics-addr", "", "Expose Prometheus /metrics on this address during run (e.g. :9090)")
 	runCmd.Flags().StringVar(&outputFile, "output-file", "", "Write output to file (default: stdout)")
-	
+
 	// Phase 5 flag
 	runCmd.Flags().StringVar(&distributedFile, "distributed", "", "agents.yaml for distributed mode")
 

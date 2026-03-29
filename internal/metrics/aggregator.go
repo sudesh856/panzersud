@@ -12,6 +12,7 @@ type Aggregator struct {
 	errorCount int64
 	bytesTotal int64
 	histogram *hdrhistogram.Histogram
+	errorMessages map[string]int64
 }
 
 func New() *Aggregator {
@@ -19,6 +20,7 @@ func New() *Aggregator {
 		//tracking latency from 1ms to 1 minute, 3 significant figures
 
 		histogram: hdrhistogram.New(1, 60000, 3),
+		 errorMessages: make(map[string]int64),
 	}
 }
 
@@ -30,6 +32,7 @@ func (a *Aggregator) Start(results <-chan worker.Result) {
 			a.totalRequests++
 			if result.Err != nil {
 				a.errorCount++
+				a.errorMessages[result.Err.Error()]++
 			}
 
 			if result.Bytes > 0 {
@@ -119,4 +122,14 @@ func (a *Aggregator) ErrorCount() int64 {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.errorCount
+}
+
+func (a *Aggregator) ErrorBreakdown() map[string]int64 {
+    a.mu.Lock()
+    defer a.mu.Unlock()
+    out := make(map[string]int64, len(a.errorMessages))
+    for k, v := range a.errorMessages {
+        out[k] = v
+    }
+    return out
 }

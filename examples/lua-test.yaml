@@ -1,0 +1,10 @@
+name: lua-scripting-test
+stages:
+  - duration: 5s
+    target_vus: 5
+
+endpoints:
+  - name: lua-post
+    url: https://httpbin.org/post
+    script: ./examples/scripts/login.lua
+    weight: 100

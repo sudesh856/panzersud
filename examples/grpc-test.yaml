@@ -1,0 +1,21 @@
+
+name: grpc-load-test
+stages:
+  - duration: 5s
+    target_vus: 10
+  - duration: 20s
+    target_vus: 50
+  - duration: 5s
+    target_vus: 0
+
+endpoints:
+  - name: say-hello
+    grpc_target:   localhost:50051
+    grpc_method:   helloworld.Greeter/SayHello
+    grpc_payload:  '{"name": "suddpanzer"}'
+    grpc_insecure: true
+    weight: 100
+
+thresholds:
+  p99_ms: 100
+  error_rate_pct: 1.0

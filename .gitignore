@@ -34,3 +34,7 @@ report-*.html          # root folder reports
 server.js
 
 suddpanzer plan(rough sketch and all that).pdf
+
+
+runs.db
+blast.db
